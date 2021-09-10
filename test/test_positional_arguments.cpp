@@ -52,22 +52,23 @@ TEST_CASE("Parse positional arguments with optional arguments in the middle" *
   REQUIRE_THROWS(program.parse_args({ "test", "rocket.mesh", "thrust_profile.csv", "--num_iterations", "15", "output.mesh" }));
 }
 
-TEST_CASE("Parse remaining arguments deemed positional" *
+TEST_CASE("Parse positional nargs=ANY arguments" *
           test_suite("positional_arguments")) {
-  GIVEN("a program that accepts an optional argument and remaining arguments") {
+  GIVEN("a program that accepts an optional argument and nargs=ANY positional arguments") {
     argparse::ArgumentParser program("test");
     program.add_argument("-o");
-    program.add_argument("input").remaining();
+    program.add_argument("input").nargs(argparse::NArgsPattern::ANY);
 
     WHEN("provided no argument") {
-      THEN("the program accepts it but gets nothing") {
+      THEN("the program accepts it and gets empty container") {
         REQUIRE_NOTHROW(program.parse_args({"test"}));
-        REQUIRE_THROWS_AS(program.get<std::vector<std::string>>("input"),
-                          std::logic_error);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 0);
       }
     }
 
-    WHEN("provided an optional followed by remaining arguments") {
+    WHEN("provided an optional followed by positional arguments") {
       program.parse_args({"test", "-o", "a.out", "a.c", "b.c", "main.c"});
 
       THEN("the optional parameter consumes an argument") {
@@ -82,19 +83,18 @@ TEST_CASE("Parse remaining arguments deemed positional" *
       }
     }
 
-    WHEN("provided remaining arguments including optional arguments") {
+    WHEN("provided an optional preceded by positional arguments") {
       program.parse_args({"test", "a.c", "b.c", "main.c", "-o", "a.out"});
 
-      THEN("the optional argument is deemed remaining") {
-        REQUIRE_THROWS_AS(program.get("-o"), std::logic_error);
+      THEN("the optional parameter consumes an argument") {
+        using namespace std::literals;
+        REQUIRE(program["-o"] == "a.out"s);
 
         auto inputs = program.get<std::vector<std::string>>("input");
-        REQUIRE(inputs.size() == 5);
+        REQUIRE(inputs.size() == 3);
         REQUIRE(inputs[0] == "a.c");
         REQUIRE(inputs[1] == "b.c");
         REQUIRE(inputs[2] == "main.c");
-        REQUIRE(inputs[3] == "-o");
-        REQUIRE(inputs[4] == "a.out");
       }
     }
   }
