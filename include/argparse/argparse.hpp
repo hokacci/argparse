@@ -117,7 +117,6 @@ template <typename T> std::string repr(T const &val) {
   } else {
     return "<not representable>";
   }
-
 }
 
 namespace {
