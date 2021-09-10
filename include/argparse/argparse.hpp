@@ -598,13 +598,6 @@ public:
     }
   }
 
-  // auto maybe_nargs() const -> std::optional<std::size_t> {
-  //   if (mNumArgs < 0)
-  //     return std::nullopt;
-  //   else
-  //     return static_cast<std::size_t>(mNumArgs);
-  // }
-
   std::size_t get_arguments_length() const {
     return std::accumulate(std::begin(mNames), std::end(mNames), std::size_t(0),
                            [](const auto &sum, const auto &s) {
