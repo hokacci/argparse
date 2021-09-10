@@ -353,7 +353,8 @@ public:
 
   Argument &implicit_value(std::any aImplicitValue) {
     mImplicitValue = std::move(aImplicitValue);
-    mNumArgs = 0;
+    mNumArgsMin = 0;
+    mNumArgsMax = 0;
     return *this;
   }
 
@@ -420,15 +421,41 @@ public:
     return *this;
   }
 
-  Argument &nargs(int aNumArgs) {
-    if (aNumArgs < 0)
-      throw std::logic_error("Number of arguments must be non-negative");
-    mNumArgs = aNumArgs;
+  Argument &nargs(std::size_t aNumArgs) {
+    mNumArgsMin = aNumArgs;
+    mNumArgsMax = aNumArgs;
     return *this;
   }
 
-  Argument &remaining() {
-    mNumArgs = -1;
+  Argument &nargs(std::size_t aNumArgsMin, std::size_t aNumArgsMax) {
+    if (aNumArgsMin > aNumArgsMax)
+      throw std::logic_error("Range of number of arguments is invalid");
+    mNumArgsMin = aNumArgsMin;
+    mNumArgsMax = aNumArgsMax;
+    return *this;
+  }
+
+  enum class NArgs {
+    ZERO_OR_ONE,
+    ANY,
+    AT_LEAST_ONE
+  };
+
+  Argument &nargs(NArgs aNargs) {
+    switch (aNargs) {
+    case NArgs::ZERO_OR_ONE:
+      mNumArgsMin = 0;
+      mNumArgsMax = 1;
+      break;
+    case NArgs::ANY:
+      mNumArgsMin = 0;
+      mNumArgsMax = std::numeric_limits<decltype(mNumArgsMax)>::max();
+      break;
+    case NArgs::AT_LEAST_ONE:
+      mNumArgsMin = 1;
+      mNumArgsMax = std::numeric_limits<decltype(mNumArgsMax)>::max();
+      break;
+    }
     return *this;
   }
 
@@ -440,16 +467,25 @@ public:
     }
     mIsUsed = true;
     mUsedName = usedName;
-    if (mNumArgs == 0) {
+    if (mNumArgsMax == 0) {
       mValues.emplace_back(mImplicitValue);
       return start;
-    } else if (mNumArgs <= std::distance(start, end)) {
-      if (auto expected = maybe_nargs()) {
-        end = std::next(start, *expected);
-        if (std::any_of(start, end, Argument::is_optional)) {
-          throw std::runtime_error("optional argument in parameter sequence");
+    } else if (static_cast<std::size_t>(std::distance(start, end)) >= mNumArgsMin) {
+
+      auto it = start;
+      for (std::size_t i = 0; it != end; ++it, ++i) {
+        if (Argument::is_optional(*it)) {
+          break;
+        }
+        if (i >= mNumArgsMax) {
+          break;
         }
       }
+      auto dist = static_cast<std::size_t>(std::distance(start, it));
+      if (dist < mNumArgsMin) {
+        throw std::runtime_error("Too few arguments");
+      }
+      end = it;
 
       struct action_apply {
         void operator()(valued_action &f) {
@@ -459,8 +495,7 @@ public:
         void operator()(void_action &f) {
           std::for_each(start, end, f);
           if (!self.mDefaultValue.has_value()) {
-            if (auto expected = self.maybe_nargs())
-              self.mValues.resize(*expected);
+            self.mValues.resize(std::distance(start, end));
           }
         }
 
@@ -480,46 +515,59 @@ public:
    * @throws std::runtime_error if argument values are not valid
    */
   void validate() const {
-    if (auto expected = maybe_nargs()) {
-      if (mIsOptional) {
-        if (mIsUsed && mValues.size() != *expected && !mIsRepeatable &&
-            !mDefaultValue.has_value()) {
-          std::stringstream stream;
-          stream << mUsedName << ": expected " << *expected << " argument(s). "
-                 << mValues.size() << " provided.";
-          throw std::runtime_error(stream.str());
+    if (mIsOptional) {
+      if (mIsUsed && (mValues.size() < mNumArgsMin || mValues.size() > mNumArgsMax) && !mIsRepeatable &&
+          !mDefaultValue.has_value()) {
+        std::stringstream stream;
+        stream << mUsedName << ": expected ";
+        if (mNumArgsMin == mNumArgsMax) {
+          stream << mNumArgsMin;
+        } else if (mNumArgsMax != std::numeric_limits<decltype(mNumArgsMax)>::max()) {
+          stream << mNumArgsMin << " to " << mNumArgsMax;
         } else {
-          // TODO: check if an implicit value was programmed for this argument
-          if (!mIsUsed && !mDefaultValue.has_value() && mIsRequired) {
-            std::stringstream stream;
-            stream << mNames[0] << ": required.";
-            throw std::runtime_error(stream.str());
-          }
-          if (mIsUsed && mIsRequired && mValues.size() == 0) {
-            std::stringstream stream;
-            stream << mUsedName << ": no value provided.";
-            throw std::runtime_error(stream.str());
-          }
+          stream << mNumArgsMin << " or more";
         }
+        stream << " argument(s). "
+          << mValues.size() << " provided.";
+        throw std::runtime_error(stream.str());
       } else {
-        if (mValues.size() != expected && !mDefaultValue.has_value()) {
+        // TODO: check if an implicit value was programmed for this argument
+        if (!mIsUsed && !mDefaultValue.has_value() && mIsRequired) {
           std::stringstream stream;
-          if (!mUsedName.empty())
-            stream << mUsedName << ": ";
-          stream << *expected << " argument(s) expected. " << mValues.size()
-                 << " provided.";
+          stream << mNames[0] << ": required.";
           throw std::runtime_error(stream.str());
         }
+        if (mIsUsed && mIsRequired && mValues.size() == 0) {
+          std::stringstream stream;
+          stream << mUsedName << ": no value provided.";
+          throw std::runtime_error(stream.str());
+        }
+      }
+    } else {
+      if ((mValues.size() < mNumArgsMin || mValues.size() > mNumArgsMax) && !mDefaultValue.has_value()) {
+        std::stringstream stream;
+        if (!mUsedName.empty())
+          stream << mUsedName << ": ";
+        if (mNumArgsMin == mNumArgsMax) {
+          stream << mNumArgsMin;
+        } else if (mNumArgsMax != std::numeric_limits<decltype(mNumArgsMax)>::max()) {
+          stream << mNumArgsMin << " to " << mNumArgsMax;
+        } else {
+          stream << mNumArgsMin << " or more";
+        }
+        stream << " argument(s) expected. " << mValues.size()
+                << " provided.";
+        throw std::runtime_error(stream.str());
       }
     }
   }
 
-  auto maybe_nargs() const -> std::optional<std::size_t> {
-    if (mNumArgs < 0)
-      return std::nullopt;
-    else
-      return static_cast<std::size_t>(mNumArgs);
-  }
+  // auto maybe_nargs() const -> std::optional<std::size_t> {
+  //   if (mNumArgs < 0)
+  //     return std::nullopt;
+  //   else
+  //     return static_cast<std::size_t>(mNumArgs);
+  // }
 
   std::size_t get_arguments_length() const {
     return std::accumulate(std::begin(mNames), std::end(mNames), std::size_t(0),
@@ -758,6 +806,9 @@ private:
     }
     if (mDefaultValue.has_value()) {
       return std::any_cast<T>(mDefaultValue);
+    } else {
+      if constexpr (details::is_container_v<T>)
+        return any_cast_container<T>(mValues);
     }
     throw std::logic_error("No value provided");
   }
@@ -802,7 +853,8 @@ private:
       std::in_place_type<valued_action>,
       [](const std::string &aValue) { return aValue; }};
   std::vector<std::any> mValues;
-  int mNumArgs = 1;
+  std::size_t mNumArgsMin = 1;
+  std::size_t mNumArgsMax = 1;
   bool mIsOptional : true;
   bool mIsRequired : true;
   bool mIsRepeatable : true;
