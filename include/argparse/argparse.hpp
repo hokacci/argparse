@@ -117,6 +117,7 @@ template <typename T> std::string repr(T const &val) {
   } else {
     return "<not representable>";
   }
+
 }
 
 namespace {
@@ -312,6 +313,45 @@ template <class T> struct parse_number<T, chars_format::fixed> {
 
 } // namespace details
 
+class SizeRange {
+  std::size_t mMin;
+  std::size_t mMax;
+
+public:
+  SizeRange(std::size_t aMin, std::size_t aMax) {
+    if (aMin > aMax)
+      throw std::logic_error("Range of number of arguments is invalid");
+    mMin = aMin;
+    mMax = aMax;
+  }
+
+  bool is_in(std::size_t value) const {
+    return value >= mMin && value <= mMax;
+  }
+
+  bool is_exact() const {
+    return mMin == mMax;
+  }
+
+  bool is_right_bounded() const {
+    return mMax < std::numeric_limits<std::size_t>::max();
+  }
+
+  std::size_t get_min() const {
+    return mMin;
+  }
+
+  std::size_t get_max() const {
+    return mMax;
+  }
+};
+
+enum class NArgsPattern {
+  ZERO_OR_ONE,
+  ANY,
+  AT_LEAST_ONE
+};
+
 class ArgumentParser;
 
 class Argument {
@@ -353,8 +393,7 @@ public:
 
   Argument &implicit_value(std::any aImplicitValue) {
     mImplicitValue = std::move(aImplicitValue);
-    mNumArgsMin = 0;
-    mNumArgsMax = 0;
+    mNumArgsRange = SizeRange{0, 0};
     return *this;
   }
 
@@ -422,38 +461,32 @@ public:
   }
 
   Argument &nargs(std::size_t aNumArgs) {
-    mNumArgsMin = aNumArgs;
-    mNumArgsMax = aNumArgs;
+    mNumArgsRange = SizeRange{aNumArgs, aNumArgs};
     return *this;
   }
 
   Argument &nargs(std::size_t aNumArgsMin, std::size_t aNumArgsMax) {
     if (aNumArgsMin > aNumArgsMax)
       throw std::logic_error("Range of number of arguments is invalid");
-    mNumArgsMin = aNumArgsMin;
-    mNumArgsMax = aNumArgsMax;
+    mNumArgsRange = SizeRange{aNumArgsMin, aNumArgsMax};
     return *this;
   }
 
-  enum class NArgs {
-    ZERO_OR_ONE,
-    ANY,
-    AT_LEAST_ONE
-  };
+  Argument &nargs(SizeRange aNumArgsRange) {
+    mNumArgsRange = aNumArgsRange;
+    return *this;
+  }
 
-  Argument &nargs(NArgs aNargs) {
+  Argument &nargs(NArgsPattern aNargs) {
     switch (aNargs) {
-    case NArgs::ZERO_OR_ONE:
-      mNumArgsMin = 0;
-      mNumArgsMax = 1;
+    case NArgsPattern::ZERO_OR_ONE:
+      mNumArgsRange = SizeRange{0, 1};
       break;
-    case NArgs::ANY:
-      mNumArgsMin = 0;
-      mNumArgsMax = std::numeric_limits<decltype(mNumArgsMax)>::max();
+    case NArgsPattern::ANY:
+      mNumArgsRange = SizeRange{0, std::numeric_limits<std::size_t>::max()};
       break;
-    case NArgs::AT_LEAST_ONE:
-      mNumArgsMin = 1;
-      mNumArgsMax = std::numeric_limits<decltype(mNumArgsMax)>::max();
+    case NArgsPattern::AT_LEAST_ONE:
+      mNumArgsRange = SizeRange{1, std::numeric_limits<std::size_t>::max()};
       break;
     }
     return *this;
@@ -467,22 +500,25 @@ public:
     }
     mIsUsed = true;
     mUsedName = usedName;
-    if (mNumArgsMax == 0) {
+
+    const auto numArgsMax = mNumArgsRange.get_max();
+    const auto numArgsMin = mNumArgsRange.get_min();
+    if (numArgsMax == 0) {
       mValues.emplace_back(mImplicitValue);
       return start;
-    } else if (static_cast<std::size_t>(std::distance(start, end)) >= mNumArgsMin) {
+    } else if (static_cast<std::size_t>(std::distance(start, end)) >= numArgsMin) {
 
       auto it = start;
       for (std::size_t i = 0; it != end; ++it, ++i) {
         if (Argument::is_optional(*it)) {
           break;
         }
-        if (i >= mNumArgsMax) {
+        if (i >= numArgsMax) {
           break;
         }
       }
       auto dist = static_cast<std::size_t>(std::distance(start, it));
-      if (dist < mNumArgsMin) {
+      if (dist < numArgsMin) {
         throw std::runtime_error("Too few arguments");
       }
       end = it;
@@ -516,16 +552,16 @@ public:
    */
   void validate() const {
     if (mIsOptional) {
-      if (mIsUsed && (mValues.size() < mNumArgsMin || mValues.size() > mNumArgsMax) && !mIsRepeatable &&
+      if (mIsUsed && !mNumArgsRange.is_in(mValues.size()) && !mIsRepeatable &&
           !mDefaultValue.has_value()) {
         std::stringstream stream;
         stream << mUsedName << ": expected ";
-        if (mNumArgsMin == mNumArgsMax) {
-          stream << mNumArgsMin;
-        } else if (mNumArgsMax != std::numeric_limits<decltype(mNumArgsMax)>::max()) {
-          stream << mNumArgsMin << " to " << mNumArgsMax;
+        if (mNumArgsRange.is_exact()) {
+          stream << mNumArgsRange.get_min();
+        } else if (mNumArgsRange.is_right_bounded()) {
+          stream << mNumArgsRange.get_min() << " to " << mNumArgsRange.get_max();
         } else {
-          stream << mNumArgsMin << " or more";
+          stream << mNumArgsRange.get_min() << " or more";
         }
         stream << " argument(s). "
           << mValues.size() << " provided.";
@@ -544,16 +580,16 @@ public:
         }
       }
     } else {
-      if ((mValues.size() < mNumArgsMin || mValues.size() > mNumArgsMax) && !mDefaultValue.has_value()) {
+      if (!mNumArgsRange.is_in(mValues.size()) && !mDefaultValue.has_value()) {
         std::stringstream stream;
         if (!mUsedName.empty())
           stream << mUsedName << ": ";
-        if (mNumArgsMin == mNumArgsMax) {
-          stream << mNumArgsMin;
-        } else if (mNumArgsMax != std::numeric_limits<decltype(mNumArgsMax)>::max()) {
-          stream << mNumArgsMin << " to " << mNumArgsMax;
+        if (mNumArgsRange.is_exact()) {
+          stream << mNumArgsRange.get_min();
+        } else if (mNumArgsRange.is_right_bounded()) {
+          stream << mNumArgsRange.get_min() << " to " << mNumArgsRange.get_max();
         } else {
-          stream << mNumArgsMin << " or more";
+          stream << mNumArgsRange.get_min() << " or more";
         }
         stream << " argument(s) expected. " << mValues.size()
                 << " provided.";
@@ -853,8 +889,7 @@ private:
       std::in_place_type<valued_action>,
       [](const std::string &aValue) { return aValue; }};
   std::vector<std::any> mValues;
-  std::size_t mNumArgsMin = 1;
-  std::size_t mNumArgsMax = 1;
+  SizeRange mNumArgsRange {1, 1};
   bool mIsOptional : true;
   bool mIsRequired : true;
   bool mIsRepeatable : true;
