@@ -493,7 +493,7 @@ public:
 
   Argument &remaining() {
     mAcceptsOptionalLikeValue = true;
-    return nargs(NArgsPattern::AT_LEAST_ONE);
+    return nargs(NArgsPattern::ANY);
   }
 
   template <typename Iterator>
