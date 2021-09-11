@@ -491,6 +491,10 @@ public:
     return *this;
   }
 
+  Argument &remaining() {
+    return nargs(NArgsPattern::AT_LEAST_ONE);
+  }
+
   template <typename Iterator>
   Iterator consume(Iterator start, Iterator end,
                    std::string_view usedName = {}) {
