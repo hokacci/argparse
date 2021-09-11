@@ -100,6 +100,55 @@ TEST_CASE("Parse positional nargs=ANY arguments" *
   }
 }
 
+TEST_CASE("Parse remaining arguments deemed positional" *
+          test_suite("positional_arguments")) {
+  GIVEN("a program that accepts an optional argument and remaining arguments") {
+    argparse::ArgumentParser program("test");
+    program.add_argument("-o");
+    program.add_argument("input").remaining();
+
+    WHEN("provided no argument") {
+      THEN("the program accepts it and gets empty container") {
+        REQUIRE_NOTHROW(program.parse_args({"test"}));
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 0);
+      }
+    }
+
+    WHEN("provided an optional followed by remaining arguments") {
+      program.parse_args({"test", "-o", "a.out", "a.c", "b.c", "main.c"});
+
+      THEN("the optional parameter consumes an argument") {
+        using namespace std::literals;
+        REQUIRE(program["-o"] == "a.out"s);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 3);
+        REQUIRE(inputs[0] == "a.c");
+        REQUIRE(inputs[1] == "b.c");
+        REQUIRE(inputs[2] == "main.c");
+      }
+    }
+
+    WHEN("provided remaining arguments including optional arguments") {
+      program.parse_args({"test", "a.c", "b.c", "main.c", "-o", "a.out"});
+
+      THEN("the optional argument is deemed remaining") {
+        REQUIRE_THROWS_AS(program.get("-o"), std::logic_error);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 5);
+        REQUIRE(inputs[0] == "a.c");
+        REQUIRE(inputs[1] == "b.c");
+        REQUIRE(inputs[2] == "main.c");
+        REQUIRE(inputs[3] == "-o");
+        REQUIRE(inputs[4] == "a.out");
+      }
+    }
+  }
+}
+
 TEST_CASE("Square a number" * test_suite("positional_arguments")) {
   argparse::ArgumentParser program;
   program.add_argument("--verbose", "-v")
