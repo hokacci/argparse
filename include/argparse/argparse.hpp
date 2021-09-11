@@ -492,6 +492,7 @@ public:
   }
 
   Argument &remaining() {
+    mAcceptsOptionalLikeValue = true;
     return nargs(NArgsPattern::AT_LEAST_ONE);
   }
 
@@ -513,7 +514,7 @@ public:
 
       auto it = start;
       for (std::size_t i = 0; it != end; ++it, ++i) {
-        if (Argument::is_optional(*it)) {
+        if (!mAcceptsOptionalLikeValue && Argument::is_optional(*it)) {
           break;
         }
         if (i >= numArgsMax) {
@@ -534,7 +535,8 @@ public:
         void operator()(void_action &f) {
           std::for_each(start, end, f);
           if (!self.mDefaultValue.has_value()) {
-            self.mValues.resize(std::distance(start, end));
+            if (!self.mAcceptsOptionalLikeValue)
+              self.mValues.resize(std::distance(start, end));
           }
         }
 
@@ -886,6 +888,7 @@ private:
       [](const std::string &aValue) { return aValue; }};
   std::vector<std::any> mValues;
   SizeRange mNumArgsRange {1, 1};
+  bool mAcceptsOptionalLikeValue = false;
   bool mIsOptional : true;
   bool mIsRequired : true;
   bool mIsRepeatable : true;
