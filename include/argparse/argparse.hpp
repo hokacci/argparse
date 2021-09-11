@@ -324,7 +324,7 @@ public:
     mMax = aMax;
   }
 
-  bool is_in(std::size_t value) const {
+  bool contains(std::size_t value) const {
     return value >= mMin && value <= mMax;
   }
 
@@ -551,7 +551,7 @@ public:
    */
   void validate() const {
     if (mIsOptional) {
-      if (mIsUsed && !mNumArgsRange.is_in(mValues.size()) && !mIsRepeatable &&
+      if (mIsUsed && !mNumArgsRange.contains(mValues.size()) && !mIsRepeatable &&
           !mDefaultValue.has_value()) {
         std::stringstream stream;
         stream << mUsedName << ": expected ";
@@ -579,7 +579,7 @@ public:
         }
       }
     } else {
-      if (!mNumArgsRange.is_in(mValues.size()) && !mDefaultValue.has_value()) {
+      if (!mNumArgsRange.contains(mValues.size()) && !mDefaultValue.has_value()) {
         std::stringstream stream;
         if (!mUsedName.empty())
           stream << mUsedName << ": ";
