@@ -505,25 +505,21 @@ public:
 
     const auto numArgsMax = mNumArgsRange.get_max();
     const auto numArgsMin = mNumArgsRange.get_min();
+    std::size_t dist = 0;
     if (numArgsMax == 0) {
       mValues.emplace_back(mImplicitValue);
       return start;
-    } else if (static_cast<std::size_t>(std::distance(start, end)) >= numArgsMin) {
-
-      auto it = start;
-      for (std::size_t i = 0; it != end; ++it, ++i) {
-        if (!mAcceptsOptionalLikeValue && Argument::is_optional(*it)) {
-          break;
-        }
-        if (i >= numArgsMax) {
-          break;
+    } else if ((dist = static_cast<std::size_t>(std::distance(start, end))) >= numArgsMin) {
+      if (numArgsMax < dist) {
+        end = std::next(start, numArgsMax);
+      }
+      if (!mAcceptsOptionalLikeValue) {
+        end = std::find_if(start, end, Argument::is_optional);
+        dist = static_cast<std::size_t>(std::distance(start, end));
+        if (dist < numArgsMin) {
+          throw std::runtime_error("Too few arguments");
         }
       }
-      auto dist = static_cast<std::size_t>(std::distance(start, it));
-      if (dist < numArgsMin) {
-        throw std::runtime_error("Too few arguments");
-      }
-      end = it;
 
       struct action_apply {
         void operator()(valued_action &f) {
