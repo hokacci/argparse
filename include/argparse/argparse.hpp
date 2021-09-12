@@ -465,8 +465,6 @@ public:
   }
 
   Argument &nargs(std::size_t aNumArgsMin, std::size_t aNumArgsMax) {
-    if (aNumArgsMin > aNumArgsMax)
-      throw std::logic_error("Range of number of arguments is invalid");
     mNumArgsRange = SizeRange{aNumArgsMin, aNumArgsMax};
     return *this;
   }
