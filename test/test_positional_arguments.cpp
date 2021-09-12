@@ -52,6 +52,54 @@ TEST_CASE("Parse positional arguments with optional arguments in the middle" *
   REQUIRE_THROWS(program.parse_args({ "test", "rocket.mesh", "thrust_profile.csv", "--num_iterations", "15", "output.mesh" }));
 }
 
+TEST_CASE("Parse positional nargs=ANY arguments" *
+          test_suite("positional_arguments")) {
+  GIVEN("a program that accepts an optional argument and nargs=ANY positional arguments") {
+    argparse::ArgumentParser program("test");
+    program.add_argument("-o");
+    program.add_argument("input").nargs(argparse::NArgsPattern::ANY);
+
+    WHEN("provided no argument") {
+      THEN("the program accepts it and gets empty container") {
+        REQUIRE_NOTHROW(program.parse_args({"test"}));
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 0);
+      }
+    }
+
+    WHEN("provided an optional followed by positional arguments") {
+      program.parse_args({"test", "-o", "a.out", "a.c", "b.c", "main.c"});
+
+      THEN("the optional parameter consumes an argument") {
+        using namespace std::literals;
+        REQUIRE(program["-o"] == "a.out"s);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 3);
+        REQUIRE(inputs[0] == "a.c");
+        REQUIRE(inputs[1] == "b.c");
+        REQUIRE(inputs[2] == "main.c");
+      }
+    }
+
+    WHEN("provided an optional preceded by positional arguments") {
+      program.parse_args({"test", "a.c", "b.c", "main.c", "-o", "a.out"});
+
+      THEN("the optional parameter consumes an argument") {
+        using namespace std::literals;
+        REQUIRE(program["-o"] == "a.out"s);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 3);
+        REQUIRE(inputs[0] == "a.c");
+        REQUIRE(inputs[1] == "b.c");
+        REQUIRE(inputs[2] == "main.c");
+      }
+    }
+  }
+}
+
 TEST_CASE("Parse remaining arguments deemed positional" *
           test_suite("positional_arguments")) {
   GIVEN("a program that accepts an optional argument and remaining arguments") {
@@ -60,10 +108,11 @@ TEST_CASE("Parse remaining arguments deemed positional" *
     program.add_argument("input").remaining();
 
     WHEN("provided no argument") {
-      THEN("the program accepts it but gets nothing") {
+      THEN("the program accepts it and gets empty container") {
         REQUIRE_NOTHROW(program.parse_args({"test"}));
-        REQUIRE_THROWS_AS(program.get<std::vector<std::string>>("input"),
-                          std::logic_error);
+
+        auto inputs = program.get<std::vector<std::string>>("input");
+        REQUIRE(inputs.size() == 0);
       }
     }
 
@@ -98,12 +147,6 @@ TEST_CASE("Parse remaining arguments deemed positional" *
       }
     }
   }
-}
-
-TEST_CASE("Negative nargs is not allowed" *
-          test_suite("positional_arguments")) {
-  argparse::ArgumentParser program("test");
-  REQUIRE_THROWS_AS(program.add_argument("output").nargs(-1), std::logic_error);
 }
 
 TEST_CASE("Square a number" * test_suite("positional_arguments")) {

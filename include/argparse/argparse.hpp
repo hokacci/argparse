@@ -312,6 +312,45 @@ template <class T> struct parse_number<T, chars_format::fixed> {
 
 } // namespace details
 
+class SizeRange {
+  std::size_t mMin;
+  std::size_t mMax;
+
+public:
+  SizeRange(std::size_t aMin, std::size_t aMax) {
+    if (aMin > aMax)
+      throw std::logic_error("Range of number of arguments is invalid");
+    mMin = aMin;
+    mMax = aMax;
+  }
+
+  bool contains(std::size_t value) const {
+    return value >= mMin && value <= mMax;
+  }
+
+  bool is_exact() const {
+    return mMin == mMax;
+  }
+
+  bool is_right_bounded() const {
+    return mMax < std::numeric_limits<std::size_t>::max();
+  }
+
+  std::size_t get_min() const {
+    return mMin;
+  }
+
+  std::size_t get_max() const {
+    return mMax;
+  }
+};
+
+enum class NArgsPattern {
+  ZERO_OR_ONE,
+  ANY,
+  AT_LEAST_ONE
+};
+
 class ArgumentParser;
 
 class Argument {
@@ -353,7 +392,7 @@ public:
 
   Argument &implicit_value(std::any aImplicitValue) {
     mImplicitValue = std::move(aImplicitValue);
-    mNumArgs = 0;
+    mNumArgsRange = SizeRange{0, 0};
     return *this;
   }
 
@@ -420,16 +459,39 @@ public:
     return *this;
   }
 
-  Argument &nargs(int aNumArgs) {
-    if (aNumArgs < 0)
-      throw std::logic_error("Number of arguments must be non-negative");
-    mNumArgs = aNumArgs;
+  Argument &nargs(std::size_t aNumArgs) {
+    mNumArgsRange = SizeRange{aNumArgs, aNumArgs};
+    return *this;
+  }
+
+  Argument &nargs(std::size_t aNumArgsMin, std::size_t aNumArgsMax) {
+    mNumArgsRange = SizeRange{aNumArgsMin, aNumArgsMax};
+    return *this;
+  }
+
+  Argument &nargs(SizeRange aNumArgsRange) {
+    mNumArgsRange = aNumArgsRange;
+    return *this;
+  }
+
+  Argument &nargs(NArgsPattern aNargs) {
+    switch (aNargs) {
+    case NArgsPattern::ZERO_OR_ONE:
+      mNumArgsRange = SizeRange{0, 1};
+      break;
+    case NArgsPattern::ANY:
+      mNumArgsRange = SizeRange{0, std::numeric_limits<std::size_t>::max()};
+      break;
+    case NArgsPattern::AT_LEAST_ONE:
+      mNumArgsRange = SizeRange{1, std::numeric_limits<std::size_t>::max()};
+      break;
+    }
     return *this;
   }
 
   Argument &remaining() {
-    mNumArgs = -1;
-    return *this;
+    mAcceptsOptionalLikeValue = true;
+    return nargs(NArgsPattern::ANY);
   }
 
   template <typename Iterator>
@@ -440,14 +502,22 @@ public:
     }
     mIsUsed = true;
     mUsedName = usedName;
-    if (mNumArgs == 0) {
+
+    const auto numArgsMax = mNumArgsRange.get_max();
+    const auto numArgsMin = mNumArgsRange.get_min();
+    std::size_t dist = 0;
+    if (numArgsMax == 0) {
       mValues.emplace_back(mImplicitValue);
       return start;
-    } else if (mNumArgs <= std::distance(start, end)) {
-      if (auto expected = maybe_nargs()) {
-        end = std::next(start, *expected);
-        if (std::any_of(start, end, Argument::is_optional)) {
-          throw std::runtime_error("optional argument in parameter sequence");
+    } else if ((dist = static_cast<std::size_t>(std::distance(start, end))) >= numArgsMin) {
+      if (numArgsMax < dist) {
+        end = std::next(start, numArgsMax);
+      }
+      if (!mAcceptsOptionalLikeValue) {
+        end = std::find_if(start, end, Argument::is_optional);
+        dist = static_cast<std::size_t>(std::distance(start, end));
+        if (dist < numArgsMin) {
+          throw std::runtime_error("Too few arguments");
         }
       }
 
@@ -459,8 +529,8 @@ public:
         void operator()(void_action &f) {
           std::for_each(start, end, f);
           if (!self.mDefaultValue.has_value()) {
-            if (auto expected = self.maybe_nargs())
-              self.mValues.resize(*expected);
+            if (!self.mAcceptsOptionalLikeValue)
+              self.mValues.resize(std::distance(start, end));
           }
         }
 
@@ -480,45 +550,51 @@ public:
    * @throws std::runtime_error if argument values are not valid
    */
   void validate() const {
-    if (auto expected = maybe_nargs()) {
-      if (mIsOptional) {
-        if (mIsUsed && mValues.size() != *expected && !mIsRepeatable &&
-            !mDefaultValue.has_value()) {
-          std::stringstream stream;
-          stream << mUsedName << ": expected " << *expected << " argument(s). "
-                 << mValues.size() << " provided.";
-          throw std::runtime_error(stream.str());
+    if (mIsOptional) {
+      if (mIsUsed && !mNumArgsRange.contains(mValues.size()) && !mIsRepeatable &&
+          !mDefaultValue.has_value()) {
+        std::stringstream stream;
+        stream << mUsedName << ": expected ";
+        if (mNumArgsRange.is_exact()) {
+          stream << mNumArgsRange.get_min();
+        } else if (mNumArgsRange.is_right_bounded()) {
+          stream << mNumArgsRange.get_min() << " to " << mNumArgsRange.get_max();
         } else {
-          // TODO: check if an implicit value was programmed for this argument
-          if (!mIsUsed && !mDefaultValue.has_value() && mIsRequired) {
-            std::stringstream stream;
-            stream << mNames[0] << ": required.";
-            throw std::runtime_error(stream.str());
-          }
-          if (mIsUsed && mIsRequired && mValues.size() == 0) {
-            std::stringstream stream;
-            stream << mUsedName << ": no value provided.";
-            throw std::runtime_error(stream.str());
-          }
+          stream << mNumArgsRange.get_min() << " or more";
         }
+        stream << " argument(s). "
+          << mValues.size() << " provided.";
+        throw std::runtime_error(stream.str());
       } else {
-        if (mValues.size() != expected && !mDefaultValue.has_value()) {
+        // TODO: check if an implicit value was programmed for this argument
+        if (!mIsUsed && !mDefaultValue.has_value() && mIsRequired) {
           std::stringstream stream;
-          if (!mUsedName.empty())
-            stream << mUsedName << ": ";
-          stream << *expected << " argument(s) expected. " << mValues.size()
-                 << " provided.";
+          stream << mNames[0] << ": required.";
+          throw std::runtime_error(stream.str());
+        }
+        if (mIsUsed && mIsRequired && mValues.size() == 0) {
+          std::stringstream stream;
+          stream << mUsedName << ": no value provided.";
           throw std::runtime_error(stream.str());
         }
       }
+    } else {
+      if (!mNumArgsRange.contains(mValues.size()) && !mDefaultValue.has_value()) {
+        std::stringstream stream;
+        if (!mUsedName.empty())
+          stream << mUsedName << ": ";
+        if (mNumArgsRange.is_exact()) {
+          stream << mNumArgsRange.get_min();
+        } else if (mNumArgsRange.is_right_bounded()) {
+          stream << mNumArgsRange.get_min() << " to " << mNumArgsRange.get_max();
+        } else {
+          stream << mNumArgsRange.get_min() << " or more";
+        }
+        stream << " argument(s) expected. " << mValues.size()
+                << " provided.";
+        throw std::runtime_error(stream.str());
+      }
     }
-  }
-
-  auto maybe_nargs() const -> std::optional<std::size_t> {
-    if (mNumArgs < 0)
-      return std::nullopt;
-    else
-      return static_cast<std::size_t>(mNumArgs);
   }
 
   std::size_t get_arguments_length() const {
@@ -758,6 +834,9 @@ private:
     }
     if (mDefaultValue.has_value()) {
       return std::any_cast<T>(mDefaultValue);
+    } else {
+      if constexpr (details::is_container_v<T>)
+        return any_cast_container<T>(mValues);
     }
     throw std::logic_error("No value provided");
   }
@@ -802,7 +881,8 @@ private:
       std::in_place_type<valued_action>,
       [](const std::string &aValue) { return aValue; }};
   std::vector<std::any> mValues;
-  int mNumArgs = 1;
+  SizeRange mNumArgsRange {1, 1};
+  bool mAcceptsOptionalLikeValue = false;
   bool mIsOptional : true;
   bool mIsRequired : true;
   bool mIsRepeatable : true;
