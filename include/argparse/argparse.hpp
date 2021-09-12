@@ -1025,7 +1025,22 @@ public:
     if (tIterator != mArgumentMap.end()) {
       return *(tIterator->second);
     }
-    throw std::logic_error("No such argument");
+    if (aArgumentName.front() != '-') {
+      std::string nameStr(aArgumentName);
+      // "-" + aArgumentName
+      nameStr = "-" + nameStr;
+      tIterator = mArgumentMap.find(nameStr);
+      if (tIterator != mArgumentMap.end()) {
+        return *(tIterator->second);
+      }
+      // "--" + aArgumentName
+      nameStr = "-" + nameStr;
+      tIterator = mArgumentMap.find(nameStr);
+      if (tIterator != mArgumentMap.end()) {
+        return *(tIterator->second);
+      }
+    }
+    throw std::logic_error("No such argument: " + std::string(aArgumentName));
   }
 
   // Print help message
